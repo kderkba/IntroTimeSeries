@@ -9,3 +9,5 @@ In this project, we explore trend and seasonality elimination methods, ARMA mode
 
 Our dataset consists of historical stock prices over the last 12 years from Apple (APPL).
 Our data comes from Kaggle (https://www.kaggle.com/szrlee/stock-time-series-20050101-to-20171231). The variables are date (Date), price at market open (Open), highest price of the day (High), lowest price of the day (Low), price at market close (Close), number of shares bought and sold (Volume), name of the stock (Name).
+
+The project was coded in R
