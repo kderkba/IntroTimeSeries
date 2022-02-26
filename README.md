@@ -2,7 +2,7 @@
 
 #### kderkba
 #### January 3, 2022
-
+(Download HTML file and open in browser to view)
 
 The goal of this project is to become familiar with the theory of time series and make predictions with a time series.
 In this project, we explore trend and seasonality elimination methods, ARMA models and GARCH models for predicting a financial time series
