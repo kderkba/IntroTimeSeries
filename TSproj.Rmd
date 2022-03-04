@@ -1,0 +1,680 @@
+---
+title: "Time-Series Forecasting: Predicting Stock Prices"
+date: "January 3, 2022"
+author: "Abdel-Kader K"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    theme: lumen
+    highlight: tango
+---
+
+<style type="text/css">
+h1.title {
+  font-family: 'Oswald', sans-serif; !important;
+  font-size: 38px;
+  color: #073980;
+  text-align: center;
+}
+h1, h2,h3 {
+  font-family: 'Oswald', sans-serif; !important;
+  color: #073980;
+}
+</style>
+
+```{r setup, cache=FALSE, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo=F,message=FALSE,warning=FALSE,fig.align="center")
+```
+
+
+```{r}
+library(xts)
+library(zoo)
+library(plotly)
+library(forecast)
+library(pracma)
+library(tseries)
+library(rugarch)
+library(PerformanceAnalytics)
+library(MLmetrics)
+library(fBasics)
+library(lmtest)
+library(fBasics)
+```
+
+# 1. Introduction
+
+Our dataset consists of historical stock prices over the last 12 years from Apple (APPL).
+Our data comes from Kaggle (https://www.kaggle.com/szrlee/stock-time-series-20050101-to-20171231). The variables are date (Date), price at market open (Open), highest price of the day (High), lowest price of the day (Low), price at market close (Close), number of shares bought and sold (Volume), name of the stock (Name).
+
+
+The goal of this project is to become familiar with the theory of time series and make predictions with a time series.
+In this project, we explore trend and seasonality elimination methods, ARMA models and GARCH models for predicting a financial time series
+
+# 2. Apple
+
+
+```{r}
+## MODIFIER LE PATH ICI AVANT DE COMMENCER
+PATH<- "/home/bathuman/IFMA/time_series"
+setwd(PATH)
+APPL<- read.csv("AAPL_2006-01-01_to_2018-01-01.csv")
+```
+
+
+```{r}
+
+# transformation into time series
+APPL['Date'] = as.Date(APPL$Date)
+
+tmp <- data.frame(APPL$Open,APPL$High,APPL$Low,APPL$Close,APPL$Volume)
+APPL_ts <- xts(tmp,APPL$Date)
+#APPL_ts['Date'] <- APPL['Date']
+
+#APPL_high <- xts(APPL$High,APPL$Date)
+#APPL_low <- xts(APPL$Low,APPL$Date)
+#APPL_close <- xts(APPL$Close,APPL$Date)
+#APPL_volume <- xts(APPL$Volume,APPL$Date)
+
+```
+
+
+
+## 2.1 Data visualisation
+
+
+
+Having the daily stock prices of Apple over 12 years, we can study our data at several levels of aggregation.
+In our study we will consider two levels: 
+
+1 - The average prices per month over the 12 years 
+
+2 - Daily prices over one month
+
+
+### 2.1.1 Average prices per month over the 12 years
+
+
+
+```{r}
+##
+
+
+mon <- data.frame(apply.monthly(APPL_ts,mean))
+
+fig_open1 <-plot_ly(x = row.names(mon),y = mon$APPL.Open,type='scatter',mode='lines',
+                   name = 'Open',width=700,height=400)
+fig_open1 <- fig_open1 %>% layout(xaxis=list(showticklabels=FALSE))
+
+fig_high <-plot_ly(x = row.names(mon),y = mon$APPL.High,type='scatter',mode='lines',
+                   name = 'High',width=700,height=400)
+fig_high <- fig_high %>% layout(xaxis=list(showticklabels=FALSE))
+
+fig_low <-plot_ly(x = row.names(mon),y = mon$APPL.Low,type='scatter',mode='lines',
+                  name = 'Low',width=700,height=400)
+fig_low <- fig_low %>% layout(xaxis=list(showticklabels=FALSE))
+
+fig_close <-plot_ly(x = row.names(mon),y = mon$APPL.Close,type='scatter',mode='lines',
+                    name = 'Close',width=700,height=400)
+fig_close <- fig_close %>% layout(xaxis=list(showticklabels=FALSE))
+
+fig_volume <-plot_ly(x = row.names(mon),y = mon$APPL.Volume,type='scatter',mode='lines',
+                     name = 'Volume',width=700,height=400)
+fig_volume <- fig_volume %>% layout(xaxis=list(title="Date", showticklabels=TRUE))
+                                    
+
+
+fig <- subplot(fig_open1,fig_high,fig_low,fig_close,fig_volume,nrows = 5) %>%
+        layout(title = list(text = "Evolution of the prices and volume of the shares as a function of time"), plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+
+
+### 2.1.2 Daily prices over one month
+
+
+```{r}
+#mois =  decembre 2017
+setwd(PATH)
+APPL_dec<- read.csv("AAPL_december2017.csv")
+```
+
+
+```{r}
+fig <-APPL_dec %>% plot_ly(x = ~Date, type="candlestick",
+                       open = ~Open,close = ~Close,
+                       high = ~High,low = ~Low,width=700,height=400)
+fig <- fig %>% add_lines(x = ~Date,y = ~Open,
+                         line = list(color='black',width=0.75),inherit=F)
+fig <- fig %>% layout(title = "Close prices of Apple stock in December 2017",
+                      xaxis=list(rangeslider=list(visible=F)),
+                      yaxis=list(title="Dollars"),
+                      showlegend = FALSE,
+                      plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+### 2.1.3 Comparison of average prices per month at opening over 12 years and prices at opening over 1 month
+
+
+
+```{r}
+fig_1 <-plot_ly(x = row.names(mon),y = mon$APPL.Open,type='scatter',mode='lines',
+                   name = '12 ans',width=700,height=400)
+fig_1 <- fig_1 %>% layout(xaxis=list(showticklabels=FALSE),
+                          yaxis= list(title="monthly average of prices in $"))
+
+fig_2 <-plot_ly(x = APPL_dec$Date,y = APPL_dec$Open,type='scatter',mode='lines',
+                   name = '1 mois',width=700,height=400)
+fig_2 <- fig_2 %>% layout(xaxis=list(showticklabels=F),
+                          yaxis=list(title=list(text="daily prices in $")))
+
+fig <- subplot(fig_1,fig_2,nrows=2) %>% layout(title = "Long run vs short run evolution of prices",plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+
+```
+
+```{r}
+par(bg='#F8F8FF')
+acf(mon$APPL.Open,main ="ACF of the average prices per month ",bg='#F8F8FF')
+```
+
+
+```{r}
+par(bg='#F8F8FF')
+acf(APPL_dec$Open,main ="ACF of the daily prices ",bg='#F8F8FF')
+```
+
+
+
+Looking at the auto-correlation functions of the data, we see that the series cannot be reasonably modeled by a stationary series. The ACF values are all outside the confidence interval, which does not correspond to the ACF of a stationary series.
+
+We notice that the series does not behave in the same way depending on whether we look at the 12-year average or the daily data over one month.
+For level 1, the data seem to grow linearly. They can potentially be approximated by a linear regression of degree 1.
+Level 2 seems to have a more periodic behavior. We will now remove the trend and seasonality from the data.
+
+We want to know if the residuals can be modeled by a stationary series.
+
+## 2.2 Removing the trend and seasonality
+
+
+In the previous section we analyzed the pattern of the data. We have seen that the data at level 1 grow in a rather linear way. And the data at level 2 have a rather periodic behavior. We explore the possibility of representing the data as a realization of the Classical Decomposition Model.
+
+
+$$
+\begin{align}
+X_t  &= m_t + s_t + Y_t \tag{1}
+\end{align}
+$$
+
+
+where $m_t$ represents the trend, $s_t$ the seasonality with a known period and $Y_t$ a stationary random noise
+We will test two methods of estimating and eliminating the trend and seasonality.
+
+### 2.2.1 Moving Average Filter
+
+
+
+In this section, we will use a moving average to estimate the trend.
+
+$$\begin{align}
+
+W_t &= (2q+1)^{-1}\sum_{j = -q}^{q} X_{t-j} \tag{2}
+
+\end{align}$$
+
+where $q \in \mathbb{N}$. Using $(1)$ we get an estimate of $m_t$.
+
+We will take the log of the data because we use a linear model.
+
+```{r}
+APPL_ma <- movavg(log(mon$APPL.Open),3) #order = 2*q + 1 
+
+fig <- plot_ly(x = row.names(mon), y = log(mon$APPL.Open),type='scatter',mode='lines+marker',name="prices",width=700,height=400)%>% 
+  add_trace(x=row.names(mon),y = APPL_ma,type='scatter',mode='lines',name = "Moving average")
+fig <- fig %>% layout(plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+```{r}
+resid1 = log(mon$APPL.Open) - APPL_ma
+fig <- plot_ly(x = row.names(mon),y= resid1,type='scatter',mode='lines+marker',name="Residuals",width=700,height=400
+               ) %>% layout(title="Residuals obtained from the Moving Average filter",plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+
+```{r}
+par(bg='#F8F8FF')
+acf(resid1,lag.max = 40,main="ACF of the residuals",bg='#F8F8FF')
+```
+
+
+
+After computing the residuals $\hat{Y}_{t} = X_{t} - \hat{m}_{t}$, we obtain the following autocorrelation function for 40 lags. We see that most of the values after 2 lags remain in the confidence interval.
+
+
+**Unit Root test to test stationarity of the differentiated series**
+
+We can apply a unit root test (or Dickey-Fuller test) which allows us to know if the obtained residuals are stationary or not.
+
+```{r}
+#adf.test(resid1)
+```
+
+The p-value of the test is 0.01, which means that we can reject the null hypothesis at a 95% confidence level. Therefore, the residuals obtained by MA of the series can be modeled by a stationary series.
+
+### 2.2.2 Differencing
+
+In this method, we introduce the lag-d operator: $\nabla_{d}X_{t} = X_{t} - X_{t-d}$.
+By applying the lag-d operator to equation (1), we have:
+
+$$
+\begin{align}
+\nabla_{d}X_{t} = m_{t} - m_{t-d} + Y_{t} - Y_{t-d}
+\end{align}
+$$
+
+We have the decomposition of the difference $\nabla_{d}X_{t}$ as a function of trend and noise. From there we can eliminate the trend by applying the operator $\nabla$: $\nabla^jX_{t} = (1-B)^jX_t$. We use the diff function from R to apply this method.
+
+```{r}
+log_open_diff <- diff(log(mon$APPL.Open),1)
+fig1 <- plot_ly(x = row.names(mon), y = log(mon$APPL.Open),type='scatter',mode='lines+marker',name="Prices",width=700,height=400) %>% layout(title="log des prix",xaxis=list(showticklabels=F))
+fig2 <- plot_ly(x=row.names(mon),y = c(0,log_open_diff),type='scatter',mode='lines',name = "Differentiated",width=700,height=400) %>% layout(title="Differentiated series")
+#fig <- subplot
+
+
+fig <- subplot(fig1,fig2,nrows=2) %>%
+        layout(title = list(text = "log of prices and trend-less series"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+We plot the auto-correlation function of the differentiated series.
+
+```{r}
+par(bg='#F8F8FF')
+acf(log_open_diff,lag.max = 40,main="ACF of the differentiated series",bg='#F8F8FF')
+```
+
+
+Several values of the ACF are still not in the interval. Then the residuals are not IID.
+
+
+**Unit Root test to test stationarity of the differentiated series**
+
+```{r}
+#adf.test(log_open_diff)
+```
+We run a Unit Root test and we obtain a p-value of 0.01, which means that we can reject the null hypothesis at the 95% confidence level. Therefore, the residuals obtained by differentiation of the series can be modeled by a stationary series. 
+
+In conclusion we have made our time series stationary thanks to the methods by differentiation and by Moving Average.
+
+
+## 2.3 ARMA models
+
+In this section we want to determine if we can find an ARMA model that models our data reasonably well.
+
+ARMA (Autoregressive Moving Average) models explain the relationship of the data series with random noise (the Moving Average part) and with its prior values (the Autoregressive part).
+
+Mathematically:
+
+$$
+X_t \hspace{1mm}\text{is an ARMA(p,q) process if }X_t \hspace{1mm}\text{is stationary and if for all } t \\
+\begin{align}
+X_t - \phi_{1}X_{t-1} - ... - \phi_{p}X_{t-p} = Z_t - \theta_{1}Z_{t-1} - ... - \theta_{q}Z_{t-q}
+\end{align}
+\\
+\text{where } (Z_t) \text{ is a white noise}
+$$
+
+Using R, we manage to find the ARMA model that best fits our series.
+
+$$
+\begin{align}
+X_{t}-X_{t-1} - 1.10 = Z_{t} - 2,87.10^{-1}Z_{t-1} 
+\end{align}
+$$
+
+```{r}
+#fit<- auto.arima(mon$APPL.Open)
+#fit
+```
+
+It turns out to be an ARIMA(0,1,1) model, i.e. a model such that the series differentiated once from our data is an ARMA(0,1).
+
+This is consistent with our results above because we have seen that by differentiating the series once we had a stationary series. And this series is well modeled by an MA(1) process.
+
+
+Using R for the daily price data over a month, we see that these data are better modeled by an ARMA(1,0) model.
+
+$$
+\begin{align}
+X_{t}-6,96.10^{-1}X_{t-1}  = Z_{t}
+\end{align}
+$$
+```{r}
+#fit_d<- auto.arima(APPL_dec$Open)
+#fit_d
+```
+
+This means that the daily prices seem to be better explained by past realizations while the averages are better explained by noise.
+
+
+### 2.3.1 Forecasting APPL stock price with an ARMA model
+
+In this section we will predict the monthly average values of Apple's stock with an ARIMA(0,1,1) model. We will estimate the error of the prediction through the root mean square error (RMSE).
+
+We first divide our dataset into a training sample and a validation sample (test sample) with the ratio 70/30.
+
+We consider the monthly averages
+
+```{r}
+training <- mon[1:100,]
+test <- mon[101:144,]
+fit_training <- auto.arima(training$APPL.Open,allowdrift = T)
+fcast1 <- forecast(fit_training,44)
+```
+
+```{r}
+fig <- plot_ly(x = row.names(mon), y = mon$APPL.Open,type='scatter',mode='lines+marker',name="Test set",width=700,height=400)%>% 
+  add_trace(x=row.names(test),y = fcast1$mean,type='scatter',mode='lines',name = "Forecasted values") %>%
+  add_trace(x=row.names(test),y = fcast1$upper[,2],name = "upper bound",line=list(dash="dash",color='grey')) %>%
+  add_trace(x=row.names(test),y = fcast1$lower[,2],name ="lower bound",line=list(dash="dash",color='grey'),fillcolor="rgba(0,40,100,0.2)", fill = 'tonexty')
+fig <- fig %>% layout(title="Forecasted values of ARIMA(0,1,1)")
+fig <- fig %>% layout(yaxis=list(title="Average stock price per month in $"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+
+The RMSE obtained for this prediction is:
+
+```{r}
+#sqrt(MSE(fcast1$mean,test$APPL.Open))
+```
+
+$$
+RMSE = 33.08
+$$
+
+This result is not very satisfactory. In the following we will try to see how we can improve it.
+
+## 2.4 GARCH models
+
+In this section, we will explore the GARCH models to see if this class of models can make a better prediction of our data.
+The ARCH and GARCH (Generalized & Autoregressive Conditional Heteroscedasticity) models were developed to reflect the properties of financial time series. These properties include skewness, volatility, and uncorrelated serial dependence. These properties cannot be captured with traditional linear models such as ARMA.
+
+The ARCH and GARCH models are written as follows:
+
+$Z_{t}$ a stationary process such that:
+
+
+$$
+\begin{align}
+Z_{t} &= \sqrt{h_{t}}e_{t} \hspace{1.5mm}\text{où } (e_{t}) \text{ est IID  Normal(0,1)} \\
+h_{t} &= \alpha_{0} + \sum_{i=1}^{p} \alpha_{i}Z_{t-i}^{2} \hspace{1.5mm} \text{pour le ARCH} \\
+h_{t} &= \alpha_{0} + \sum_{i=1}^{p} \alpha_{i}Z_{t-i}^{2} + \sum_{i=1}^{q} \beta_{i}h_{t-i} \hspace{1.5mm} \text{pour le GARCH} \tag{3}
+\end{align}
+$$
+
+These models are applied on the log returns of stock prices at closing i.e. $log(\frac{P_t}{P_{t-1}})$ where $P_t$ is the stock price at closing because we notice that log returns tend to be stationary.
+
+We start by transforming our data into log returns.
+
+**Log returns visualisation**
+
+```{r}
+log_ret <- data.frame(with(APPL_ts,diff(log(APPL_ts$APPL.Close))))
+log_ret <- na.omit(log_ret)
+
+fig<-plot_ly(x = row.names(log_ret),y = log_ret$APPL.Close,type='scatter',mode='lines',
+                   name = 'Log return',width=700,height=400)
+fig<- fig %>% layout(title="Log returns as a function of time",plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+We notice in the graph above that the series does indeed look stationary.
+
+```{r}
+par(bg='#F8F8FF')
+acf(log_ret$APPL.Close,main="log returns ACF",bg='#F8F8FF')
+```
+
+
+```{r}
+par(bg='#F8F8FF')
+acf(log_ret$APPL.Close*log_ret$APPL.Close,main="square of log returns ACF",bg='#F8F8FF')
+```
+
+
+In the ACF function above, we see that the values are very close to 0. While in the ACF of squares, the values are significantly different from 0. This implies that we have a series of log returns where the realizations are uncorrelated but dependent. The ARCH and GARCH models include this dependence with the $h_{t}$ term (volatility).
+
+**Log returns distribution**
+
+```{r}
+par(bg='#F8F8FF')
+chart.Histogram(log_ret$APPL.Close,
+                methods=c("add.density","add.normal"),
+                colorset=c("blue","red","green"),bg='#F8F8FF')
+```
+
+
+We see that the tails of the distribution of returns are larger than those of the normal distribution (in green). This means that the returns are not normally distributed: we can observe very low returns and other very high returns depending on the day.
+
+
+**Building a GARCH model**
+
+```{r}
+#constant mean model
+#standard garch
+#error term is normal
+model <- ugarchspec(mean.model = list(armaOrder = c(0,0)),
+           variance.model = list(model = "sGARCH"),
+           distribution.model = "norm")
+
+gar1 <- ugarchfit(data=log_ret$APPL.Close,spec=model)
+```
+
+We construct a GARCH model that assumes a constant mean of 0, a standard GARCH model of normal returns (equation (3)).
+We obtain a GARCH(1,1) such that model:
+
+$$
+\begin{align}
+Y_{t} &= a + Z_{t} \text{ où } Z_{t} \text{ est un GARCH(1,1) tq: }\\
+h_{t} &= 9.10^{-6} + 8.10^{-2}Z_{t-1}^{2} + 8,96.10^{-1}h_{t-1}
+\end{align}
+$$
+
+The Ljung-Box statistical test for correlation tells us, at a 95% confidence level that there is no correlation of the data (as noted above with the ACF). This test is an argument for the validity of our GARCH model.
+On the flip side, Pearson's test for the "Goodness of fit" rejects the null hypothesis which assumes that the residuals are normal. This means that we have room to improve our model at this level.
+
+
+
+### 2.4.1 Forecasting Apple stock prices with the standard GARCH model
+
+
+We divide our data set in 2 parts (ratio 70/30), with the training sample and the validation sample.
+
+We apply the GARCH(1,1) model on the training data and from there we make a prediction for the values of the validation sample. As before, we measure our error with the RMSE.
+
+```{r}
+t1 <- row.names(log_ret)[1:2112]
+t2 <- log_ret[1:2112,]
+v1 <- row.names(log_ret)[2113:3018]
+v2 <- log_ret[2113:3018,]
+train_garch <- data.frame(t1,t2)
+val_garch <- data.frame(v1,v2)
+colnames(train_garch) <- c("DatesTrain","ReturnsTrain")
+colnames(val_garch) <- c("DatesVal","ReturnsVal")
+```
+
+```{r}
+model <- ugarchspec(mean.model = list(armaOrder = c(0,0)),
+           variance.model = list(model = "sGARCH"),
+           distribution.model = "norm")
+
+gar_train <- ugarchfit(data=train_garch$ReturnsTrain,spec=model)
+final_model <- model
+setfixed(final_model) <- as.list(coef(gar_train))
+ftrain <- ugarchforecast(data = train_garch$ReturnsTrain,
+                         fitORspec = final_model,
+                         n.ahead = 906)
+sim <- ugarchpath(spec= final_model,
+                  m.sim = 1,
+                  n.sim = 906)
+
+fig <- plot_ly(x = val_garch$DatesVal, y = val_garch$ReturnsVal,type='scatter',mode='lines+marker',name="Test set",width=700,height=400)%>% 
+  add_trace(x=val_garch$DatesVal,y = fitted(sim)[,1],type='scatter',mode='lines',name = "Forecasted values")
+fig <- fig %>% layout(title="Residuals forecasted by the GARCH(1,1) model")
+fig <- fig %>% layout(yaxis=list(title="Log returns"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+
+The graph above shows the predicted and current values of the log returns between 2014 and 2017. The prediction is rather close to the true values.
+We obtain an error of:
+
+```{r}
+#sqrt(MSE(fitted(sim)[,1],val_garch$ReturnsVal))
+```
+
+$$
+RMSE = 0.0263
+$$
+This error is small and significantly better than the error obtained with the ARIMA(0,1,1) model.
+
+**Visualization**
+
+To better understand the accuracy of our model, we can re-express the log returns in terms of prices and compare the predicted trajectories and the true trajectory.
+
+```{r}
+options(warn = - 1)
+start_value <- APPL$Close[2112]
+pred_prices_garch <- start_value*apply(fitted(sim),2,'cumsum') + start_value
+
+fig <- plot_ly(x = APPL$Date, y = APPL$Close,type='scatter',mode='lines+marker',name="Test set",width=700,height=400)%>% 
+  add_trace(x=val_garch$DatesVal,y = pred_prices_garch,type='scatter',mode='lines',name = "Forecasted values")
+fig <- fig %>% layout(title="Prices forecasted by the GARCH(1,1) model")
+fig <- fig %>% layout(yaxis=list(title="Prix"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+It is possible to improve our model. Either by giving it more training samples or by using a GARCH that does not assume that the residuals are normally distributed because we have seen with the Pearson test that this is not the case.
+
+### 2.4.2 Modified GARCH, an example: EGARCH
+
+In this section, we will explore the EGARCH model which is a modification of the GARCH model.
+As mentioned above, GARCH is a model that was developed to reflect the properties of financial time series. EGARCH is a less restrictive model than GARCH, it does not assume that log returns are Gaussian and does not force the coefficients of the conditional variance $h_{t}$ to be positive (i.e. $h_t$ is asymmetric). This has the effect of incorporating the following stylized facts:
+
+  - The distribution of financial data has thick tails
+  
+  - Negative shocks at $t-1$ have a stronger impact at $t$ than positive shocks
+  
+  
+The model is written as follows:
+
+$$
+\begin{align}
+Z_{t} &= \sqrt{h_{t}}e_{t}\text{, }e_{t}\text{ is IID(0,1) }\\
+\ln{h_{t}} &= c + \alpha_{1}g(e_{t-1}) + \gamma_{1}\ln{h_{t-1}} \\
+g(e_{t}) &= e_{t} +\lambda(|e_{t}| - E|e_{t}|)
+\end{align}
+$$
+
+Where $c$, $\alpha_{1}$ are real and $|\gamma_{1}|<1$ and $e_{t}$ has a symmetric distribution in 0.
+
+
+
+```{r}
+APPL_egarch=ugarchspec(variance.model=list(model = "eGARCH",
+                                           garchOrder=c(1,1)),
+                       mean.model=list(armaOrder=c(0,0)),
+                       distribution.model = "std")
+
+APPL_egarch_fit=ugarchfit(spec=APPL_egarch, data=train_garch$ReturnsTrain)
+
+
+```
+
+```{r}
+setfixed(APPL_egarch) <- as.list(coef(APPL_egarch_fit))
+
+fAPPL_egarch=ugarchforecast(data = train_garch$ReturnsTrain,
+                            fitORspec = APPL_egarch_fit,
+                            n.ahead=906)
+
+sim_egarch <- ugarchpath(spec= APPL_egarch,
+                  m.sim = 1,
+                  n.sim = 906)
+
+fig <- plot_ly(x = val_garch$DatesVal, y = val_garch$ReturnsVal,type='scatter',mode='lines+marker',name="Test set",width=700,height=400)%>% 
+  add_trace(x=val_garch$DatesVal,y = fitted(sim_egarch)[,1],type='scatter',mode='lines',name = "Forecasted values")
+fig <- fig %>% layout(title="Residuals forecasted by the EGARCH(1,1) model")
+fig <- fig %>% layout(yaxis=list(title="Log returns"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+```{r}
+#sqrt(MSE(fitted(sim_egarch)[,1],val_garch$ReturnsVal))
+```
+$$
+RMSE = 0.0241
+$$
+
+
+```{r}
+options(warn = - 1)
+start_value <- APPL$Close[2112]
+pred_prices_garch <- start_value*apply(fitted(sim_egarch),2,'cumsum') + start_value
+
+fig <- plot_ly(x = APPL$Date, y = APPL$Close,type='scatter',mode='lines+marker',name="Test set",width=700,height=400)%>% 
+  add_trace(x=val_garch$DatesVal,y = pred_prices_garch,type='scatter',mode='lines',name = "Forecasted values")
+fig <- fig %>% layout(title="Prix prédits par le modèle EGARCH(1,1)")
+fig <- fig %>% layout(yaxis=list(title="Prix"),plot_bgcolor='#F8F8FF')
+fig <- fig %>% config(displayModeBar = F)
+ppc <- htmltools::div(fig, align="center" )  # Result is now an HTML object
+ppc
+```
+
+This model improves the RMSE error. To go further, we can also try to change the mean of the GARCH model for a better fit.  It is important to remember that in order to really benefit from GARCH models other than the standard GARCH, it is necessary to check whether the data with which we work verify the stylized facts of the financial data on which these models are based.
+
+
+# 3 References
+
+
+
+[1] Introduction to Time Series and Forecasting, Peter J. Brockwell, Richard A. Davis
+
+[2] VLab NYU, Volatility Analysis, EGARCH, https://vlab.stern.nyu.edu/docs/volatility/EGARCH
+
+[3] Medium, A complete introduction to time series analysis, https://medium.com/analytics-vidhya/a-complete-introduction-to-time-series-analysis-with-r-differencing-db94bc4df0ae
+
+[4] Dr Bharatendra Rai, https://www.youtube.com/user/westlandindia
+
+
